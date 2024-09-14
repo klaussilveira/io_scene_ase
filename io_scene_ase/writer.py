@@ -1,3 +1,6 @@
+from .ase import ASE
+
+
 class ASEFile(object):
     def __init__(self):
         self.commands = []
@@ -99,7 +102,7 @@ class ASEWriter(object):
             self.write_command(command)
 
     @staticmethod
-    def build_ase_tree(ase) -> ASEFile:
+    def build_ase_tree(ase: ASE) -> ASEFile:
         root = ASEFile()
         root.add_command('3DSMAX_ASCIIEXPORT').push_datum(200)
 

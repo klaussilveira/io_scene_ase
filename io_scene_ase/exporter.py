@@ -3,9 +3,11 @@ from typing import Iterable, List, Set, Union
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, BoolProperty, CollectionProperty, PointerProperty, IntProperty, EnumProperty
-from bpy.types import Operator, Material, PropertyGroup, UIList, Object, FileHandler, Collection
-from .builder import ASEBuilder, ASEBuilderOptions, ASEBuilderError, get_mesh_objects
+from bpy.props import StringProperty, CollectionProperty, PointerProperty, IntProperty, EnumProperty, BoolProperty
+from bpy.types import Operator, Material, PropertyGroup, UIList, Object, FileHandler
+from mathutils import Matrix, Vector
+
+from .builder import ASEBuildOptions, ASEBuildError, get_mesh_objects, build_ase
 from .writer import ASEWriter
 
 
@@ -13,9 +15,35 @@ class ASE_PG_material(PropertyGroup):
     material: PointerProperty(type=Material)
 
 
+def get_vertex_color_attributes_from_objects(objects: Iterable[Object]) -> Set[str]:
+    '''
+    Get the unique vertex color attributes from all the selected objects.
+    :param objects: The objects to search for vertex color attributes.
+    :return: A set of unique vertex color attributes.
+    '''
+    items = set()
+    for obj in filter(lambda x: x.type == 'MESH', objects):
+        for layer in filter(lambda x: x.domain == 'CORNER', obj.data.color_attributes):
+            items.add(layer.name)
+    return items
+
+
+def vertex_color_attribute_items(self, context):
+    # Get the unique color attributes from all the selected objects.
+    return [(x, x, '') for x in sorted(get_vertex_color_attributes_from_objects(context.selected_objects))]
+
+
 class ASE_PG_export(PropertyGroup):
     material_list: CollectionProperty(name='Materials', type=ASE_PG_material)
     material_list_index: IntProperty(name='Index', default=0)
+    should_export_vertex_colors: BoolProperty(name='Export Vertex Colors', default=True)
+    vertex_color_mode: EnumProperty(name='Vertex Color Mode', items=(
+        ('ACTIVE', 'Active', 'Use the active vertex color attribute'),
+        ('EXPLICIT', 'Explicit', 'Use the vertex color attribute specified below'),
+    ))
+    has_vertex_colors: BoolProperty(name='Has Vertex Colors', default=False, options={'HIDDEN'})
+    vertex_color_attribute: EnumProperty(name='Attribute', items=vertex_color_attribute_items)
+    should_invert_normals: BoolProperty(name='Invert Normals', default=False, description='Invert the normals of the exported geometry. This should be used if the software you are exporting to uses a different winding order than Blender')
 
 
 def get_unique_materials(mesh_objects: Iterable[Object]) -> List[Material]:
@@ -109,16 +137,34 @@ class ASE_OT_export(Operator, ExportHelper):
 
     def draw(self, context):
         layout = self.layout
+        pg = context.scene.ase_export
 
         materials_header, materials_panel = layout.panel('Materials', default_closed=False)
         materials_header.label(text='Materials')
 
         if materials_panel:
             row = materials_panel.row()
-            row.template_list('ASE_UL_materials', '', context.scene.ase_export, 'material_list', context.scene.ase_export, 'material_list_index')
+            row.template_list('ASE_UL_materials', '', pg, 'material_list', pg, 'material_list_index')
             col = row.column(align=True)
             col.operator(ASE_OT_material_list_move_up.bl_idname, icon='TRIA_UP', text='')
             col.operator(ASE_OT_material_list_move_down.bl_idname, icon='TRIA_DOWN', text='')
+
+
+        has_vertex_colors = len(get_vertex_color_attributes_from_objects(context.selected_objects)) > 0
+        vertex_colors_header, vertex_colors_panel = layout.panel_prop(pg, 'should_export_vertex_colors')
+        row = vertex_colors_header.row()
+        row.enabled = has_vertex_colors
+        row.prop(pg, 'should_export_vertex_colors', text='Vertex Colors')
+
+        if vertex_colors_panel:
+            vertex_colors_panel.use_property_split = True
+            vertex_colors_panel.use_property_decorate = False
+            if has_vertex_colors:
+                vertex_colors_panel.prop(pg, 'vertex_color_mode', text='Mode')
+                if pg.vertex_color_mode == 'EXPLICIT':
+                    vertex_colors_panel.prop(pg, 'vertex_color_attribute', icon='GROUP_VCOL')
+            else:
+                vertex_colors_panel.label(text='No vertex color attributes found')
 
         advanced_header, advanced_panel = layout.panel('Advanced', default_closed=True)
         advanced_header.label(text='Advanced')
@@ -127,6 +173,7 @@ class ASE_OT_export(Operator, ExportHelper):
             advanced_panel.use_property_split = True
             advanced_panel.use_property_decorate = False
             advanced_panel.prop(self, 'object_eval_state')
+            advanced_panel.prop(pg, 'should_invert_normals')
 
     def invoke(self, context: 'Context', event: 'Event' ) -> Union[Set[str], Set[int]]:
         mesh_objects = [x[0] for x in get_mesh_objects(context.selected_objects)]
@@ -141,16 +188,22 @@ class ASE_OT_export(Operator, ExportHelper):
         return {'RUNNING_MODAL'}
 
     def execute(self, context):
-        options = ASEBuilderOptions()
-        options.object_eval_state = self.object_eval_state
         pg = getattr(context.scene, 'ase_export')
+
+        options = ASEBuildOptions()
+        options.object_eval_state = self.object_eval_state
+        options.should_export_vertex_colors = pg.should_export_vertex_colors
+        options.vertex_color_mode = pg.vertex_color_mode
+        options.has_vertex_colors = len(get_vertex_color_attributes_from_objects(context.selected_objects)) > 0
+        options.vertex_color_attribute = pg.vertex_color_attribute
         options.materials = [x.material for x in pg.material_list]
+        options.should_invert_normals = pg.should_invert_normals
         try:
-            ase = ASEBuilder().build(context, options, context.selected_objects)
+            ase = build_ase(context, options, context.selected_objects)
             ASEWriter().write(self.filepath, ase)
             self.report({'INFO'}, 'ASE exported successfully')
             return {'FINISHED'}
-        except ASEBuilderError as e:
+        except ASEBuildError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
 
@@ -190,8 +243,9 @@ class ASE_OT_export_collection(Operator, ExportHelper):
     def execute(self, context):
         collection = bpy.data.collections.get(self.collection)
 
-        options = ASEBuilderOptions()
+        options = ASEBuildOptions()
         options.object_eval_state = self.object_eval_state
+        options.transform = Matrix.Translation(-Vector(collection.instance_offset))
 
         # Iterate over all the objects in the collection.
         mesh_objects = get_mesh_objects(collection.all_objects)
@@ -199,8 +253,8 @@ class ASE_OT_export_collection(Operator, ExportHelper):
         options.materials = get_unique_materials([x[0] for x in mesh_objects])
 
         try:
-            ase = ASEBuilder().build(context, options, collection.all_objects)
-        except ASEBuilderError as e:
+            ase = build_ase(context, options, collection.all_objects)
+        except ASEBuildError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
 

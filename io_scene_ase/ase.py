@@ -1,3 +1,8 @@
+from typing import Optional, List
+
+from bpy.types import Material
+
+
 class ASEFace(object):
     def __init__(self):
         self.a = 0
@@ -50,6 +55,5 @@ class ASEGeometryObject(object):
 
 class ASE(object):
     def __init__(self):
-        self.materials = []
+        self.materials: List[Optional[Material]] = []
         self.geometry_objects = []
-
