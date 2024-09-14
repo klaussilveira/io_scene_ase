@@ -179,7 +179,7 @@ def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Obje
                 color_attribute = None
                 match options.vertex_color_mode:
                     case 'ACTIVE':
-                        color_attribute = mesh_data.color_attributes[active_color_name]
+                        color_attribute = mesh_data.color_attributes.get(active_color_name, None)
                     case 'EXPLICIT':
                         color_attribute = mesh_data.color_attributes.get(options.vertex_color_attribute, None)
 
