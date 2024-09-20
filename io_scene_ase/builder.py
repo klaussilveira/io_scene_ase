@@ -191,12 +191,15 @@ def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Obje
 
             # Vertex Colors
             if options.should_export_vertex_colors and options.has_vertex_colors:
-                color_attribute = None
                 match options.vertex_color_mode:
                     case 'ACTIVE':
-                        color_attribute = mesh_data.color_attributes.get(active_color_name, None)
+                        color_attribute_name = active_color_name
                     case 'EXPLICIT':
-                        color_attribute = mesh_data.color_attributes.get(options.vertex_color_attribute, None)
+                        color_attribute_name = options.vertex_color_attribute
+                    case _:
+                        raise ASEBuildError('Invalid vertex color mode')
+
+                color_attribute = mesh_data.color_attributes.get(color_attribute_name, None)
 
                 if color_attribute is not None:
                     # Make sure that the selected color attribute is on the CORNER domain.
