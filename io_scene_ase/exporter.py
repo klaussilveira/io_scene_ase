@@ -1,10 +1,11 @@
 import os.path
-from typing import Iterable, List, Set, Union
+from typing import Iterable, List, Set, Union, cast, Optional
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
 from bpy.props import StringProperty, CollectionProperty, PointerProperty, IntProperty, EnumProperty, BoolProperty
-from bpy.types import Operator, Material, PropertyGroup, UIList, Object, FileHandler
+from bpy.types import Operator, Material, PropertyGroup, UIList, Object, FileHandler, Event, Context, SpaceProperties, \
+    Collection
 from mathutils import Matrix, Vector
 
 from .builder import ASEBuildOptions, ASEBuildError, get_mesh_objects, build_ase
@@ -13,6 +14,10 @@ from .writer import ASEWriter
 
 class ASE_PG_material(PropertyGroup):
     material: PointerProperty(type=Material)
+
+
+class ASE_PG_string(PropertyGroup):
+    string: StringProperty()
 
 
 def get_vertex_color_attributes_from_objects(objects: Iterable[Object]) -> Set[str]:
@@ -66,6 +71,123 @@ def populate_material_list(mesh_objects: Iterable[Object], material_list):
         m.index = index
 
 
+def get_collection_from_context(context: Context) -> Optional[Collection]:
+    if context.space_data.type != 'PROPERTIES':
+        return None
+
+    space_data = cast(SpaceProperties, context.space_data)
+
+    if space_data.use_pin_id:
+        return cast(Collection, space_data.pin_id)
+    else:
+        return context.collection
+
+
+def get_collection_export_operator_from_context(context: Context) -> Optional['ASE_OT_export_collection']:
+    collection = get_collection_from_context(context)
+    if collection is None:
+        return None
+    if 0 > collection.active_exporter_index >= len(collection.exporters):
+        return None
+    exporter = collection.exporters[collection.active_exporter_index]
+    # TODO: make sure this is actually an ASE exporter.
+    return exporter.export_properties
+
+
+class ASE_OT_material_order_add(Operator):
+    bl_idname = 'ase_export.material_order_add'
+    bl_label = 'Add'
+    bl_description = 'Add a material to the list'
+
+    def invoke(self, context: Context, event: Event) -> Union[Set[str], Set[int]]:
+        # TODO: get the region that this was invoked from and set the collection to the collection of the region.
+        print(event)
+        return self.execute(context)
+
+    def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
+        # Make sure this is being invoked from the properties region.
+        operator = get_collection_export_operator_from_context(context)
+
+        if operator is None:
+            return {'INVALID_CONTEXT'}
+
+        material_string = operator.material_order.add()
+        material_string.string = 'Material'
+
+        return {'FINISHED'}
+
+
+class ASE_OT_material_order_remove(Operator):
+    bl_idname = 'ase_export.material_order_remove'
+    bl_label = 'Remove'
+    bl_description = 'Remove the selected material from the list'
+
+    @classmethod
+    def poll(cls, context: Context):
+        operator = get_collection_export_operator_from_context(context)
+        if operator is None:
+            return False
+        return 0 <= operator.material_order_index < len(operator.material_order)
+
+    def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
+        operator = get_collection_export_operator_from_context(context)
+
+        if operator is None:
+            return {'INVALID_CONTEXT'}
+
+        operator.material_order.remove(operator.material_order_index)
+
+        return {'FINISHED'}
+
+
+class ASE_OT_material_order_move_up(Operator):
+    bl_idname = 'ase_export.material_order_move_up'
+    bl_label = 'Move Up'
+    bl_description = 'Move the selected material up one slot'
+
+    @classmethod
+    def poll(cls, context: Context):
+        operator = get_collection_export_operator_from_context(context)
+        if operator is None:
+            return False
+        return operator.material_order_index > 0
+
+    def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
+        operator = get_collection_export_operator_from_context(context)
+
+        if operator is None:
+            return {'INVALID_CONTEXT'}
+
+        operator.material_order.move(operator.material_order_index, operator.material_order_index - 1)
+        operator.material_order_index -= 1
+
+        return {'FINISHED'}
+
+
+class ASE_OT_material_order_move_down(Operator):
+    bl_idname = 'ase_export.material_order_move_down'
+    bl_label = 'Move Down'
+    bl_description = 'Move the selected material down one slot'
+
+    @classmethod
+    def poll(cls, context: Context):
+        operator = get_collection_export_operator_from_context(context)
+        if operator is None:
+            return False
+        return operator.material_order_index < len(operator.material_order) - 1
+
+    def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
+        operator = get_collection_export_operator_from_context(context)
+
+        if operator is None:
+            return {'INVALID_CONTEXT'}
+
+        operator.material_order.move(operator.material_order_index, operator.material_order_index + 1)
+        operator.material_order_index += 1
+
+        return {'FINISHED'}
+
+
 class ASE_OT_material_list_move_up(Operator):
     bl_idname = 'ase_export.material_list_item_move_up'
     bl_label = 'Move Up'
@@ -106,6 +228,13 @@ class ASE_UL_materials(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row()
         row.prop(item.material, 'name', text='', emboss=False, icon_value=layout.icon(item.material))
+
+
+class ASE_UL_strings(UIList):
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        row = layout.row()
+        row.prop(item, 'string', text='', emboss=False)
+
 
 
 object_eval_state_items = (
@@ -227,10 +356,25 @@ class ASE_OT_export_collection(Operator, ExportHelper):
     )
 
     collection: StringProperty()
+    material_order: CollectionProperty(name='Materials', type=ASE_PG_string)
+    material_order_index: IntProperty(name='Index', default=0)
 
 
     def draw(self, context):
         layout = self.layout
+
+        materials_header, materials_panel = layout.panel('Materials', default_closed=False)
+        materials_header.label(text='Materials')
+
+        if materials_panel:
+            row = materials_panel.row()
+            row.template_list('ASE_UL_strings', '', self, 'material_order', self, 'material_order_index')
+            col = row.column(align=True)
+            col.operator(ASE_OT_material_order_add.bl_idname, icon='ADD', text='')
+            col.operator(ASE_OT_material_order_remove.bl_idname, icon='REMOVE', text='')
+            col.separator()
+            col.operator(ASE_OT_material_order_move_up.bl_idname, icon='TRIA_UP', text='')
+            col.operator(ASE_OT_material_order_move_down.bl_idname, icon='TRIA_DOWN', text='')
 
         advanced_header, advanced_panel = layout.panel('Advanced', default_closed=True)
         advanced_header.label(text='Advanced')
@@ -249,8 +393,15 @@ class ASE_OT_export_collection(Operator, ExportHelper):
 
         # Iterate over all the objects in the collection.
         mesh_objects = get_mesh_objects(collection.all_objects)
+
         # Get all the materials used by the objects in the collection.
         options.materials = get_unique_materials([x[0] for x in mesh_objects])
+
+        # Sort the materials based on the order in the material order list, keeping in mind that the material order list
+        # may not contain all the materials used by the objects in the collection.
+        material_order = [x.string for x in self.material_order]
+        material_order_map = {x: i for i, x in enumerate(material_order)}
+        options.materials.sort(key=lambda x: material_order_map.get(x.name, len(material_order)))
 
         try:
             ase = build_ase(context, options, collection.all_objects)
@@ -277,11 +428,17 @@ class ASE_FH_export(FileHandler):
 
 classes = (
     ASE_PG_material,
+    ASE_PG_string,
     ASE_UL_materials,
+    ASE_UL_strings,
     ASE_PG_export,
     ASE_OT_export,
     ASE_OT_export_collection,
     ASE_OT_material_list_move_down,
     ASE_OT_material_list_move_up,
+    ASE_OT_material_order_add,
+    ASE_OT_material_order_remove,
+    ASE_OT_material_order_move_down,
+    ASE_OT_material_order_move_up,
     ASE_FH_export,
 )
