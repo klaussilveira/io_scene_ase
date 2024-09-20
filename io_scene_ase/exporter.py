@@ -57,7 +57,7 @@ def get_unique_materials(mesh_objects: Iterable[Object]) -> List[Material]:
         for i, material_slot in enumerate(mesh_object.material_slots):
             material = material_slot.material
             if material is None:
-                raise RuntimeError('Material slot cannot be empty (index ' + str(i) + ')')
+                raise RuntimeError(f'Material slots cannot be empty ({mesh_object.name}, material slot index {i})')
             materials.add(material)
     return list(materials)
 
@@ -308,7 +308,12 @@ class ASE_OT_export(Operator, ExportHelper):
         mesh_objects = [x[0] for x in get_mesh_objects(context.selected_objects)]
 
         pg = getattr(context.scene, 'ase_export')
-        populate_material_list(mesh_objects, pg.material_list)
+
+        try:
+            populate_material_list(mesh_objects, pg.material_list)
+        except RuntimeError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
 
         self.filepath = f'{context.active_object.name}.ase'
 
