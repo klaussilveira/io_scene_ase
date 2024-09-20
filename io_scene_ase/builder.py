@@ -57,6 +57,7 @@ def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Obje
     for object_index, (obj, asset_instance) in enumerate(mesh_objects):
 
         matrix_world = get_object_matrix(obj, asset_instance)
+        matrix_world = options.transform @ matrix_world
 
         # Save the active color name for vertex color export.
         active_color_name = obj.data.color_attributes.active_color_name

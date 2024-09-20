@@ -338,8 +338,8 @@ class ASE_OT_export(Operator, ExportHelper):
             # Calculate some statistics about the ASE file to display in the console.
             object_count = len(ase.geometry_objects)
             material_count = len(ase.materials)
-            vertex_count = sum(len(x.vertices) for x in ase.geometry_objects)
             face_count = sum(len(x.faces) for x in ase.geometry_objects)
+            vertex_count = sum(len(x.vertices) for x in ase.geometry_objects)
 
             ASEWriter().write(self.filepath, ase)
             self.report({'INFO'}, f'ASE exported successfully ({object_count} objects, {material_count} materials, {face_count} faces, {vertex_count} vertices)')
@@ -370,12 +370,15 @@ class ASE_OT_export_collection(Operator, ExportHelper):
     collection: StringProperty()
     material_order: CollectionProperty(name='Materials', type=ASE_PG_string)
     material_order_index: IntProperty(name='Index', default=0)
-
+    export_space: EnumProperty(name='Export Space', items=(
+        ('WORLD', 'World Space', 'Export the collection in world-space (i.e., as it appears in the 3D view)'),
+        ('INSTANCE', 'Instance Space', 'Export the collection as an instance (transforms the world-space geometry by the inverse of the instance offset)'),
+    ), default='INSTANCE')
 
     def draw(self, context):
         layout = self.layout
 
-        materials_header, materials_panel = layout.panel('Materials', default_closed=False)
+        materials_header, materials_panel = layout.panel('Materials', default_closed=True)
         materials_header.label(text='Materials')
 
         if materials_panel:
@@ -395,13 +398,19 @@ class ASE_OT_export_collection(Operator, ExportHelper):
             advanced_panel.use_property_split = True
             advanced_panel.use_property_decorate = False
             advanced_panel.prop(self, 'object_eval_state')
+            advanced_panel.prop(self, 'export_space')
 
     def execute(self, context):
         collection = bpy.data.collections.get(self.collection)
 
         options = ASEBuildOptions()
         options.object_eval_state = self.object_eval_state
-        options.transform = Matrix.Translation(-Vector(collection.instance_offset))
+
+        match self.export_space:
+            case 'WORLD':
+                options.transform = Matrix.Identity(4)
+            case 'INSTANCE':
+                options.transform = Matrix.Translation(-Vector(collection.instance_offset))
 
         # Iterate over all the objects in the collection.
         mesh_objects = get_mesh_objects(collection.all_objects)
