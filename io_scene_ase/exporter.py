@@ -334,8 +334,15 @@ class ASE_OT_export(Operator, ExportHelper):
         options.should_invert_normals = pg.should_invert_normals
         try:
             ase = build_ase(context, options, context.selected_objects)
+
+            # Calculate some statistics about the ASE file to display in the console.
+            object_count = len(ase.geometry_objects)
+            material_count = len(ase.materials)
+            vertex_count = sum(len(x.vertices) for x in ase.geometry_objects)
+            face_count = sum(len(x.faces) for x in ase.geometry_objects)
+
             ASEWriter().write(self.filepath, ase)
-            self.report({'INFO'}, 'ASE exported successfully')
+            self.report({'INFO'}, f'ASE exported successfully ({object_count} objects, {material_count} materials, {face_count} faces, {vertex_count} vertices)')
             return {'FINISHED'}
         except ASEBuildError as e:
             self.report({'ERROR'}, str(e))
