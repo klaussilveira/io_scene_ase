@@ -128,6 +128,21 @@ def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Obje
 
         loop_triangle_index_order = (2, 1, 0) if should_invert_normals else (0, 1, 2)
 
+        # Gather the list of unique material indices in the loop triangles.
+        face_material_indices = {loop_triangle.material_index for loop_triangle in mesh_data.loop_triangles}
+
+        # Make sure that each material index is within the bounds of the material indices list.
+        for material_index in face_material_indices:
+            if material_index >= len(material_indices):
+                raise ASEBuildError(f'Material index {material_index} for mesh \'{obj.name}\' is out of bounds.\n'
+                                    f'This means that one or more faces are assigned to a material slot that does '
+                                    f'not exist.\n'
+                                    f'The referenced material indices in the faces are: {sorted(list(face_material_indices))}.\n'
+                                    f'Either add enough materials to the object or assign faces to existing material slots.'
+                                    )
+
+        del face_material_indices
+
         # Faces
         for face_index, loop_triangle in enumerate(mesh_data.loop_triangles):
             face = ASEFace()
