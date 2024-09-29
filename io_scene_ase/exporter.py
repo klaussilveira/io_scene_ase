@@ -52,14 +52,15 @@ class ASE_PG_export(PropertyGroup):
 
 
 def get_unique_materials(mesh_objects: Iterable[Object]) -> List[Material]:
-    materials = set()
+    materials = []
     for mesh_object in mesh_objects:
         for i, material_slot in enumerate(mesh_object.material_slots):
             material = material_slot.material
             if material is None:
                 raise RuntimeError(f'Material slots cannot be empty ({mesh_object.name}, material slot index {i})')
-            materials.add(material)
-    return list(materials)
+            if material not in materials:
+                materials.append(material)
+    return materials
 
 
 def populate_material_list(mesh_objects: Iterable[Object], material_list):
