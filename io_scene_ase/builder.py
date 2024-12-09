@@ -1,4 +1,4 @@
-from typing import Iterable, Optional, List, Tuple
+from typing import Iterable, Optional, List, Tuple, cast
 
 from bpy.types import Object, Context, Material, Mesh
 
@@ -7,6 +7,8 @@ import bpy
 import bmesh
 import math
 from mathutils import Matrix, Vector
+
+from .dfs import DfsObject
 
 SMOOTHING_GROUP_MAX = 32
 
@@ -24,40 +26,29 @@ class ASEBuildOptions(object):
         self.has_vertex_colors = False
         self.vertex_color_attribute = ''
         self.should_invert_normals = False
+        self.should_export_visible_only = True
+        self.scale = 1.0
 
 
-def get_object_matrix(obj: Object, asset_instance: Optional[Object] = None) -> Matrix:
-    if asset_instance is not None:
-        return asset_instance.matrix_world @ Matrix().Translation(asset_instance.instance_collection.instance_offset) @ obj.matrix_local
-    return obj.matrix_world
-
-
-def get_mesh_objects(objects: Iterable[Object]) -> List[Tuple[Object, Optional[Object]]]:
-    mesh_objects = []
-    for obj in objects:
-        if obj.type == 'MESH':
-            mesh_objects.append((obj, None))
-        elif obj.instance_collection:
-            for instance_object in obj.instance_collection.all_objects:
-                if instance_object.type == 'MESH':
-                    mesh_objects.append((instance_object, obj))
-    return mesh_objects
-
-
-def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Object]) -> ASE:
+def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[DfsObject]) -> ASE:
     ase = ASE()
 
     main_geometry_object = None
-    mesh_objects = get_mesh_objects(objects)
 
-    context.window_manager.progress_begin(0, len(mesh_objects))
+    dfs_objects = list(dfs_objects)
+
+    context.window_manager.progress_begin(0, len(dfs_objects))
 
     ase.materials = options.materials
 
-    for object_index, (obj, asset_instance) in enumerate(mesh_objects):
+    max_uv_layers = 0
+    for dfs_object in dfs_objects:
+        mesh_data = cast(Mesh, dfs_object.obj.data)
+        max_uv_layers = max(max_uv_layers, len(mesh_data.uv_layers))
 
-        matrix_world = get_object_matrix(obj, asset_instance)
-        matrix_world = options.transform @ matrix_world
+    for object_index, dfs_object in enumerate(dfs_objects):
+        obj = dfs_object.obj
+        matrix_world = dfs_object.matrix_world
 
         # Save the active color name for vertex color export.
         active_color_name = obj.data.color_attributes.active_color_name
@@ -98,7 +89,7 @@ def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Obje
                     del bm
                     raise ASEBuildError(f'Collision mesh \'{obj.name}\' is not convex')
 
-        vertex_transform = Matrix.Rotation(math.pi, 4, 'Z') @ matrix_world
+        vertex_transform = Matrix.Rotation(math.pi, 4, 'Z') @ Matrix.Scale(options.scale, 4) @ matrix_world
 
         for vertex_index, vertex in enumerate(mesh_data.vertices):
             geometry_object.vertices.append(vertex_transform @ vertex.co)
@@ -183,6 +174,13 @@ def build_ase(context: Context, options: ASEBuildOptions, objects: Iterable[Obje
                 for loop_index, loop in enumerate(mesh_data.loops):
                     u, v = uv_layer_data[loop_index].uv
                     uv_layer.texture_vertices.append((u, v, 0.0))
+
+            # Add zeroed texture vertices for any missing UV layers.
+            for i in range(len(geometry_object.uv_layers), max_uv_layers):
+                uv_layer = ASEUVLayer()
+                for _ in mesh_data.loops:
+                    uv_layer.texture_vertices.append((0.0, 0.0, 0.0))
+                geometry_object.uv_layers.append(uv_layer)
 
             # Texture Faces
             for loop_triangle in mesh_data.loop_triangles:

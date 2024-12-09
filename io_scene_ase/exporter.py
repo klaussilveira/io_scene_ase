@@ -1,14 +1,14 @@
-import os.path
 from typing import Iterable, List, Set, Union, cast, Optional
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, CollectionProperty, PointerProperty, IntProperty, EnumProperty, BoolProperty
+from bpy.props import StringProperty, CollectionProperty, PointerProperty, IntProperty, EnumProperty, BoolProperty, \
+    FloatProperty
 from bpy.types import Operator, Material, PropertyGroup, UIList, Object, FileHandler, Event, Context, SpaceProperties, \
     Collection
 from mathutils import Matrix, Vector
 
-from .builder import ASEBuildOptions, ASEBuildError, get_mesh_objects, build_ase
+from .builder import ASEBuildOptions, ASEBuildError, build_ase
 from .writer import ASEWriter
 
 
@@ -238,10 +238,41 @@ class ASE_UL_strings(UIList):
 
 
 
-object_eval_state_items = (
+object_eval_state_items = [
     ('EVALUATED', 'Evaluated', 'Use data from fully evaluated object'),
     ('ORIGINAL', 'Original', 'Use data from original object with no modifiers applied'),
-)
+]
+
+
+class ASE_OT_populate_material_order_list(Operator):
+    bl_idname = 'ase_export.populate_material_order_list'
+    bl_label = 'Populate Material Order List'
+    bl_description = 'Populate the material order list with the materials used by objects in the collection'
+
+    visible_only: BoolProperty(name='Visible Only', default=True, description='Populate the list with only the materials of visible objects')
+
+    def invoke(self, context: 'Context', event: 'Event'):
+        return context.window_manager.invoke_props_dialog(self)
+
+    def execute(self, context):
+        collection = get_collection_from_context(context)
+        operator = get_collection_export_operator_from_context(context)
+        if operator is None:
+            return {'CANCELLED'}
+
+        from .dfs import dfs_collection_objects
+
+        mesh_objects = list(map(lambda x: x.obj, filter(lambda x: x.obj.type == 'MESH', dfs_collection_objects(collection, True))))
+
+        # Exclude objects that are not visible.
+        materials = get_unique_materials(mesh_objects)
+
+        operator.material_order.clear()
+        for material in materials:
+            m = operator.material_order.add()
+            m.string = material.name
+
+        return {'FINISHED'}
 
 
 class ASE_OT_export(Operator, ExportHelper):
@@ -257,6 +288,8 @@ class ASE_OT_export(Operator, ExportHelper):
         name='Data',
         default='EVALUATED'
     )
+    should_export_visible_only: BoolProperty(name='Visible Only', default=False, description='Export only visible objects')
+    scale: FloatProperty(name='Scale', default=1.0, min=0.0001, soft_max=1000.0, description='Scale factor to apply to the exported geometry')
 
     @classmethod
     def poll(cls, context):
@@ -269,6 +302,12 @@ class ASE_OT_export(Operator, ExportHelper):
         layout = self.layout
         pg = context.scene.ase_export
 
+        flow = layout.grid_flow()
+        flow.use_property_split = True
+        flow.use_property_decorate = False
+        flow.prop(self, 'should_export_visible_only')
+        flow.prop(self, 'scale')
+
         materials_header, materials_panel = layout.panel('Materials', default_closed=False)
         materials_header.label(text='Materials')
 
@@ -278,7 +317,6 @@ class ASE_OT_export(Operator, ExportHelper):
             col = row.column(align=True)
             col.operator(ASE_OT_material_list_move_up.bl_idname, icon='TRIA_UP', text='')
             col.operator(ASE_OT_material_list_move_down.bl_idname, icon='TRIA_DOWN', text='')
-
 
         has_vertex_colors = len(get_vertex_color_attributes_from_objects(context.selected_objects)) > 0
         vertex_colors_header, vertex_colors_panel = layout.panel_prop(pg, 'should_export_vertex_colors')
@@ -333,8 +371,15 @@ class ASE_OT_export(Operator, ExportHelper):
         options.vertex_color_attribute = pg.vertex_color_attribute
         options.materials = [x.material for x in pg.material_list]
         options.should_invert_normals = pg.should_invert_normals
+        options.should_export_visible_only = self.should_export_visible_only
+        options.scale = self.scale
+
+        from .dfs import dfs_view_layer_objects
+
+        dfs_objects = list(filter(lambda x: x.obj.type == 'MESH', dfs_view_layer_objects(context.view_layer)))
+
         try:
-            ase = build_ase(context, options, context.selected_objects)
+            ase = build_ase(context, options, dfs_objects)
 
             # Calculate some statistics about the ASE file to display in the console.
             object_count = len(ase.geometry_objects)
@@ -348,6 +393,12 @@ class ASE_OT_export(Operator, ExportHelper):
         except ASEBuildError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
+
+
+export_space_items = [
+    ('WORLD', 'World Space', 'Export the collection in world-space (i.e., as it appears in the 3D view)'),
+    ('INSTANCE', 'Instance Space', 'Export the collection as an instance (transforms the world-space geometry by the inverse of the instance offset)'),
+]
 
 
 class ASE_OT_export_collection(Operator, ExportHelper):
@@ -371,13 +422,18 @@ class ASE_OT_export_collection(Operator, ExportHelper):
     collection: StringProperty()
     material_order: CollectionProperty(name='Materials', type=ASE_PG_string)
     material_order_index: IntProperty(name='Index', default=0)
-    export_space: EnumProperty(name='Export Space', items=(
-        ('WORLD', 'World Space', 'Export the collection in world-space (i.e., as it appears in the 3D view)'),
-        ('INSTANCE', 'Instance Space', 'Export the collection as an instance (transforms the world-space geometry by the inverse of the instance offset)'),
-    ), default='INSTANCE')
+    export_space: EnumProperty(name='Export Space', items=export_space_items, default='INSTANCE')
+    should_export_visible_only: BoolProperty(name='Visible Only', default=False, description='Export only visible objects')
+    scale: FloatProperty(name='Scale', default=1.0, min=0.0001, soft_max=1000.0, description='Scale factor to apply to the exported geometry')
 
     def draw(self, context):
         layout = self.layout
+
+        flow = layout.grid_flow()
+        flow.use_property_split = True
+        flow.use_property_decorate = False
+        flow.prop(self, 'should_export_visible_only')
+        flow.prop(self, 'scale')
 
         materials_header, materials_panel = layout.panel('Materials', default_closed=True)
         materials_header.label(text='Materials')
@@ -391,6 +447,8 @@ class ASE_OT_export_collection(Operator, ExportHelper):
             col.separator()
             col.operator(ASE_OT_material_order_move_up.bl_idname, icon='TRIA_UP', text='')
             col.operator(ASE_OT_material_order_move_down.bl_idname, icon='TRIA_DOWN', text='')
+            col.separator()
+            col.operator(ASE_OT_populate_material_order_list.bl_idname, icon='FILE_REFRESH', text='')
 
         advanced_header, advanced_panel = layout.panel('Advanced', default_closed=True)
         advanced_header.label(text='Advanced')
@@ -406,6 +464,7 @@ class ASE_OT_export_collection(Operator, ExportHelper):
 
         options = ASEBuildOptions()
         options.object_eval_state = self.object_eval_state
+        options.scale = self.scale
 
         match self.export_space:
             case 'WORLD':
@@ -413,20 +472,34 @@ class ASE_OT_export_collection(Operator, ExportHelper):
             case 'INSTANCE':
                 options.transform = Matrix.Translation(-Vector(collection.instance_offset))
 
-        # Iterate over all the objects in the collection.
-        mesh_objects = get_mesh_objects(collection.all_objects)
+        from .dfs import dfs_collection_objects
+
+        dfs_objects = list(filter(lambda x: x.obj.type == 'MESH', dfs_collection_objects(collection, options.should_export_visible_only)))
+        mesh_objects = [x.obj for x in dfs_objects]
 
         # Get all the materials used by the objects in the collection.
-        options.materials = get_unique_materials([x[0] for x in mesh_objects])
+        options.materials = get_unique_materials(mesh_objects)
 
         # Sort the materials based on the order in the material order list, keeping in mind that the material order list
         # may not contain all the materials used by the objects in the collection.
         material_order = [x.string for x in self.material_order]
         material_order_map = {x: i for i, x in enumerate(material_order)}
-        options.materials.sort(key=lambda x: material_order_map.get(x.name, len(material_order)))
+
+        # Split the list of materials into two lists: one for materials that appear in the material order list, and one
+        # for materials that do not. Then append the two lists together, with the ordered materials first.
+        ordered_materials = []
+        unordered_materials = []
+        for material in options.materials:
+            if material.name in material_order_map:
+                ordered_materials.append(material)
+            else:
+                unordered_materials.append(material)
+
+        ordered_materials.sort(key=lambda x: material_order_map.get(x.name, len(material_order)))
+        options.materials = ordered_materials + unordered_materials
 
         try:
-            ase = build_ase(context, options, collection.all_objects)
+            ase = build_ase(context, options, dfs_objects)
         except ASEBuildError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
@@ -462,5 +535,6 @@ classes = (
     ASE_OT_material_order_remove,
     ASE_OT_material_order_move_down,
     ASE_OT_material_order_move_up,
+    ASE_OT_populate_material_order_list,
     ASE_FH_export,
 )

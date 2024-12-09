@@ -115,7 +115,7 @@ class ASEWriter(object):
             for material_index, material in enumerate(ase.materials):
                 submaterial_node = material_node.push_child('SUBMATERIAL')
                 submaterial_node.push_datum(material_index)
-                submaterial_node.push_child('MATERIAL_NAME').push_datum(material)
+                submaterial_node.push_child('MATERIAL_NAME').push_datum(material.name)
                 diffuse_node = submaterial_node.push_child('MAP_DIFFUSE')
                 diffuse_node.push_child('MAP_NAME').push_datum('default')
                 diffuse_node.push_child('UVW_U_OFFSET').push_datum(0.0)
