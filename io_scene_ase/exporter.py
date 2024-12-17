@@ -275,6 +275,36 @@ class ASE_OT_populate_material_order_list(Operator):
         return {'FINISHED'}
 
 
+empty_set = set()
+axis_identifiers = ('X', 'Y', 'Z', '-X', '-Y', '-Z')
+forward_items = (
+    ('X', 'X Forward', ''),
+    ('Y', 'Y Forward', ''),
+    ('Z', 'Z Forward', ''),
+    ('-X', '-X Forward', ''),
+    ('-Y', '-Y Forward', ''),
+    ('-Z', '-Z Forward', ''),
+)
+
+up_items = (
+    ('X', 'X Up', ''),
+    ('Y', 'Y Up', ''),
+    ('Z', 'Z Up', ''),
+    ('-X', '-X Up', ''),
+    ('-Y', '-Y Up', ''),
+    ('-Z', '-Z Up', ''),
+)
+
+def forward_axis_update(self, _context: Context):
+    if self.forward_axis == self.up_axis:
+        self.up_axis = next((axis for axis in axis_identifiers if axis != self.forward_axis), 'Z')
+
+
+def up_axis_update(self, _context: Context):
+    if self.up_axis == self.forward_axis:
+        self.forward_axis = next((axis for axis in axis_identifiers if axis != self.up_axis), 'X')
+
+
 class ASE_OT_export(Operator, ExportHelper):
     bl_idname = 'io_scene_ase.ase_export'
     bl_label = 'Export ASE'
@@ -283,6 +313,8 @@ class ASE_OT_export(Operator, ExportHelper):
     bl_description = 'Export selected objects to ASE'
     filename_ext = '.ase'
     filter_glob: StringProperty(default="*.ase", options={'HIDDEN'}, maxlen=255)
+
+    # TODO: why are these not part of the ASE_PG_export property group?
     object_eval_state: EnumProperty(
         items=object_eval_state_items,
         name='Data',
@@ -290,11 +322,13 @@ class ASE_OT_export(Operator, ExportHelper):
     )
     should_export_visible_only: BoolProperty(name='Visible Only', default=False, description='Export only visible objects')
     scale: FloatProperty(name='Scale', default=1.0, min=0.0001, soft_max=1000.0, description='Scale factor to apply to the exported geometry')
+    forward_axis: EnumProperty(name='Forward', items=forward_items, default='X', update=forward_axis_update)
+    up_axis: EnumProperty(name='Up', items=up_items, default='Z', update=up_axis_update)
 
     @classmethod
     def poll(cls, context):
-        if not any(x.type == 'MESH' for x in context.selected_objects):
-            cls.poll_message_set('At least one mesh must be selected')
+        if not any(x.type == 'MESH' or (x.type == 'EMPTY' and x.instance_collection is not None) for x in context.selected_objects):
+            cls.poll_message_set('At least one mesh or instanced collection must be selected')
             return False
         return True
 
@@ -305,8 +339,6 @@ class ASE_OT_export(Operator, ExportHelper):
         flow = layout.grid_flow()
         flow.use_property_split = True
         flow.use_property_decorate = False
-        flow.prop(self, 'should_export_visible_only')
-        flow.prop(self, 'scale')
 
         materials_header, materials_panel = layout.panel('Materials', default_closed=False)
         materials_header.label(text='Materials')
@@ -334,6 +366,16 @@ class ASE_OT_export(Operator, ExportHelper):
             else:
                 vertex_colors_panel.label(text='No vertex color attributes found')
 
+        transform_header, transform_panel = layout.panel('Transform', default_closed=True)
+        transform_header.label(text='Transform')
+
+        if transform_panel:
+            transform_panel.use_property_split = True
+            transform_panel.use_property_decorate = False
+            transform_panel.prop(self, 'scale')
+            transform_panel.prop(self, 'forward_axis')
+            transform_panel.prop(self, 'up_axis')
+
         advanced_header, advanced_panel = layout.panel('Advanced', default_closed=True)
         advanced_header.label(text='Advanced')
 
@@ -344,7 +386,13 @@ class ASE_OT_export(Operator, ExportHelper):
             advanced_panel.prop(pg, 'should_invert_normals')
 
     def invoke(self, context: 'Context', event: 'Event' ) -> Union[Set[str], Set[int]]:
-        mesh_objects = [x[0] for x in get_mesh_objects(context.selected_objects)]
+        from .dfs import dfs_view_layer_objects
+
+        mesh_objects = list(map(lambda x: x.obj, filter(lambda x: x.is_selected and x.obj.type == 'MESH', dfs_view_layer_objects(context.view_layer))))
+
+        if len(mesh_objects) == 0:
+            self.report({'ERROR'}, 'No mesh objects selected')
+            return {'CANCELLED'}
 
         pg = getattr(context.scene, 'ase_export')
 
@@ -373,10 +421,12 @@ class ASE_OT_export(Operator, ExportHelper):
         options.should_invert_normals = pg.should_invert_normals
         options.should_export_visible_only = self.should_export_visible_only
         options.scale = self.scale
+        options.forward_axis = self.forward_axis
+        options.up_axis = self.up_axis
 
         from .dfs import dfs_view_layer_objects
 
-        dfs_objects = list(filter(lambda x: x.obj.type == 'MESH', dfs_view_layer_objects(context.view_layer)))
+        dfs_objects = list(filter(lambda x: x.is_selected and x.obj.type == 'MESH', dfs_view_layer_objects(context.view_layer)))
 
         try:
             ase = build_ase(context, options, dfs_objects)
@@ -425,6 +475,8 @@ class ASE_OT_export_collection(Operator, ExportHelper):
     export_space: EnumProperty(name='Export Space', items=export_space_items, default='INSTANCE')
     should_export_visible_only: BoolProperty(name='Visible Only', default=False, description='Export only visible objects')
     scale: FloatProperty(name='Scale', default=1.0, min=0.0001, soft_max=1000.0, description='Scale factor to apply to the exported geometry')
+    forward_axis: EnumProperty(name='Forward', items=forward_items, default='X', update=forward_axis_update)
+    up_axis: EnumProperty(name='Up', items=up_items, default='Z', update=up_axis_update)
 
     def draw(self, context):
         layout = self.layout
@@ -433,7 +485,6 @@ class ASE_OT_export_collection(Operator, ExportHelper):
         flow.use_property_split = True
         flow.use_property_decorate = False
         flow.prop(self, 'should_export_visible_only')
-        flow.prop(self, 'scale')
 
         materials_header, materials_panel = layout.panel('Materials', default_closed=True)
         materials_header.label(text='Materials')
@@ -450,6 +501,16 @@ class ASE_OT_export_collection(Operator, ExportHelper):
             col.separator()
             col.operator(ASE_OT_populate_material_order_list.bl_idname, icon='FILE_REFRESH', text='')
 
+        transform_header, transform_panel = layout.panel('Transform', default_closed=True)
+        transform_header.label(text='Transform')
+
+        if transform_panel:
+            transform_panel.use_property_split = True
+            transform_panel.use_property_decorate = False
+            transform_panel.prop(self, 'scale')
+            transform_panel.prop(self, 'forward_axis')
+            transform_panel.prop(self, 'up_axis')
+
         advanced_header, advanced_panel = layout.panel('Advanced', default_closed=True)
         advanced_header.label(text='Advanced')
 
@@ -465,6 +526,8 @@ class ASE_OT_export_collection(Operator, ExportHelper):
         options = ASEBuildOptions()
         options.object_eval_state = self.object_eval_state
         options.scale = self.scale
+        options.forward_axis = self.forward_axis
+        options.up_axis = self.up_axis
 
         match self.export_space:
             case 'WORLD':

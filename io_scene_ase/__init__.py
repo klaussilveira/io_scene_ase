@@ -4,6 +4,7 @@ if 'bpy' in locals():
     if 'builder'    in locals(): importlib.reload(builder)
     if 'writer'     in locals(): importlib.reload(writer)
     if 'exporter'   in locals(): importlib.reload(exporter)
+    if 'dfs'        in locals(): importlib.reload(dfs)
 
 import bpy
 import bpy.utils.previews
@@ -11,6 +12,7 @@ from . import ase
 from . import builder
 from . import writer
 from . import exporter
+from . import dfs
 
 classes = exporter.classes
 

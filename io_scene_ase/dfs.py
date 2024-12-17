@@ -7,7 +7,7 @@ instances. This is useful for exporters that need to traverse the object hierarc
 
 from typing import Optional, Set, Iterable, List
 
-from bpy.types import Collection, Object, ViewLayer, LayerCollection
+from bpy.types import Collection, Object, ViewLayer, LayerCollection, Context
 from mathutils import Matrix
 
 
@@ -133,22 +133,12 @@ def dfs_view_layer_objects(view_layer: ViewLayer) -> Iterable[DfsObject]:
     @param view_layer: The view layer to inspect.
     @return: An iterable of tuples containing the object, the instance objects, and the world matrix.
     '''
-    def layer_collection_objects_recursive(layer_collection: LayerCollection):
+    def layer_collection_objects_recursive(layer_collection: LayerCollection, visited: Set[Object]=None):
+        if visited is None:
+            visited = set()
         for child in layer_collection.children:
-            yield from layer_collection_objects_recursive(child)
+            yield from layer_collection_objects_recursive(child, visited=visited)
         # Iterate only the top-level objects in this collection first.
-        yield from _dfs_collection_objects_recursive(layer_collection.collection)
+        yield from _dfs_collection_objects_recursive(layer_collection.collection, visited=visited)
 
     yield from layer_collection_objects_recursive(view_layer.layer_collection)
-
-
-def _is_dfs_object_visible(obj: Object, instance_objects: List[Object]) -> bool:
-    '''
-    Check if a DFS object is visible.
-    @param obj: The object.
-    @param instance_objects: The instance objects.
-    @return: True if the object is visible, False otherwise.
-    '''
-    if instance_objects:
-        return instance_objects[-1].visible_get()
-    return obj.visible_get()

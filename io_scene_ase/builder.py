@@ -28,6 +28,36 @@ class ASEBuildOptions(object):
         self.should_invert_normals = False
         self.should_export_visible_only = True
         self.scale = 1.0
+        self.forward_axis = 'X'
+        self.up_axis = 'Z'
+
+
+def get_vector_from_axis_identifier(axis_identifier: str) -> Vector:
+    match axis_identifier:
+        case 'X':
+            return Vector((1.0, 0.0, 0.0))
+        case 'Y':
+            return Vector((0.0, 1.0, 0.0))
+        case 'Z':
+            return Vector((0.0, 0.0, 1.0))
+        case '-X':
+            return Vector((-1.0, 0.0, 0.0))
+        case '-Y':
+            return Vector((0.0, -1.0, 0.0))
+        case '-Z':
+            return Vector((0.0, 0.0, -1.0))
+
+
+def get_coordinate_system_transform(forward_axis: str = 'X', up_axis: str = 'Z') -> Matrix:
+    forward = get_vector_from_axis_identifier(forward_axis)
+    up = get_vector_from_axis_identifier(up_axis)
+    left = up.cross(forward)
+    return Matrix((
+        (forward.x, forward.y, forward.z, 0.0),
+        (left.x, left.y, left.z, 0.0),
+        (up.x, up.y, up.z, 0.0),
+        (0.0, 0.0, 0.0, 1.0)
+    ))
 
 
 def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[DfsObject]) -> ASE:
@@ -45,6 +75,8 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
     for dfs_object in dfs_objects:
         mesh_data = cast(Mesh, dfs_object.obj.data)
         max_uv_layers = max(max_uv_layers, len(mesh_data.uv_layers))
+
+    coordinate_system_transform = get_coordinate_system_transform(options.forward_axis, options.up_axis)
 
     for object_index, dfs_object in enumerate(dfs_objects):
         obj = dfs_object.obj
@@ -92,7 +124,9 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
         vertex_transform = Matrix.Rotation(math.pi, 4, 'Z') @ Matrix.Scale(options.scale, 4) @ matrix_world
 
         for vertex_index, vertex in enumerate(mesh_data.vertices):
-            geometry_object.vertices.append(vertex_transform @ vertex.co)
+            vertex = vertex_transform @ vertex.co
+            vertex = coordinate_system_transform @ vertex
+            geometry_object.vertices.append(vertex)
 
         material_indices = []
         if not geometry_object.is_collision:
