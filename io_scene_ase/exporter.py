@@ -231,10 +231,11 @@ class ASE_UL_materials(UIList):
         row.prop(item.material, 'name', text='', emboss=False, icon_value=layout.icon(item.material))
 
 
-class ASE_UL_strings(UIList):
+class ASE_UL_material_names(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row()
-        row.prop(item, 'string', text='', emboss=False)
+        material = bpy.data.materials.get(item.string, None)
+        row.prop(item, 'string', text='', emboss=False, icon_value=layout.icon(material) if material is not None else 0)
 
 
 
@@ -491,7 +492,7 @@ class ASE_OT_export_collection(Operator, ExportHelper):
 
         if materials_panel:
             row = materials_panel.row()
-            row.template_list('ASE_UL_strings', '', self, 'material_order', self, 'material_order_index')
+            row.template_list('ASE_UL_material_names', '', self, 'material_order', self, 'material_order_index')
             col = row.column(align=True)
             col.operator(ASE_OT_material_order_add.bl_idname, icon='ADD', text='')
             col.operator(ASE_OT_material_order_remove.bl_idname, icon='REMOVE', text='')
@@ -588,7 +589,7 @@ classes = (
     ASE_PG_material,
     ASE_PG_string,
     ASE_UL_materials,
-    ASE_UL_strings,
+    ASE_UL_material_names,
     ASE_PG_export,
     ASE_OT_export,
     ASE_OT_export_collection,
