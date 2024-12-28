@@ -62,7 +62,12 @@ def get_coordinate_system_transform(forward_axis: str = 'X', up_axis: str = 'Z')
 
 def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[DfsObject]) -> ASE:
     ase = ASE()
-    ase.materials = options.materials
+    ase.materials = [x.name for x in options.materials]
+
+    # If no materials are assigned to the object, add an empty material.
+    # This is necessary for the ASE format to be compatible with the UT2K4 importer.
+    if len(ase.materials) == 0:
+        ase.materials.append('')
 
     dfs_objects = list(dfs_objects)
     dfs_objects_processed = 0
@@ -112,7 +117,6 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
             max_uv_layers = max(max_uv_layers, len(mesh_data.uv_layers))
 
         geometry_object.uv_layers = [ASEUVLayer() for _ in range(max_uv_layers)]
-        print('max_uv_layers', max_uv_layers)
 
         for dfs_object in geometry_object_info.dfs_objects:
             obj = dfs_object.obj
@@ -136,7 +140,10 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
                     mesh_object = bpy.data.objects.new('', mesh_data)
                     mesh_object.matrix_world = matrix_world
 
-            vertex_transform = Matrix.Rotation(math.pi, 4, 'Z') @ Matrix.Scale(options.scale, 4) @ matrix_world
+            vertex_transform = (Matrix.Rotation(math.pi, 4, 'Z') @
+                                Matrix.Scale(options.scale, 4) @
+                                options.transform @
+                                matrix_world)
 
             for vertex_index, vertex in enumerate(mesh_data.vertices):
                 vertex = vertex_transform @ vertex.co
@@ -148,7 +155,7 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
                 for mesh_material_index, material in enumerate(obj.data.materials):
                     if material is None:
                         raise ASEBuildError(f'Material slot {mesh_material_index + 1} for mesh \'{obj.name}\' cannot be empty')
-                    material_indices.append(ase.materials.index(material))
+                    material_indices.append(ase.materials.index(material.name))
 
             if len(material_indices) == 0:
                 # If no materials are assigned to the mesh, just have a single empty material.
