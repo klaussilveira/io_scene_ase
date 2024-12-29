@@ -99,18 +99,6 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
         geometry_object = ASEGeometryObject()
         geometry_object.name = geometry_object_info.name
 
-        if geometry_object.is_collision:
-            # Test that collision meshes are manifold and convex.
-            bm = bmesh.new()
-            bm.from_mesh(mesh_object.data)
-            for edge in bm.edges:
-                if not edge.is_manifold:
-                    del bm
-                    raise ASEBuildError(f'Collision mesh \'{obj.name}\' is not manifold')
-                if not edge.is_convex:
-                    del bm
-                    raise ASEBuildError(f'Collision mesh \'{obj.name}\' is not convex')
-
         max_uv_layers = 0
         for dfs_object in geometry_object_info.dfs_objects:
             mesh_data = cast(Mesh, dfs_object.obj.data)
@@ -120,6 +108,19 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
 
         for dfs_object in geometry_object_info.dfs_objects:
             obj = dfs_object.obj
+
+            if geometry_object.is_collision:
+                # Test that collision meshes are manifold and convex.
+                bm = bmesh.new()
+                bm.from_mesh(obj.data)
+                for edge in bm.edges:
+                    if not edge.is_manifold:
+                        del bm
+                        raise ASEBuildError(f'Collision mesh \'{obj.name}\' is not manifold')
+                    if not edge.is_convex:
+                        del bm
+                        raise ASEBuildError(f'Collision mesh \'{obj.name}\' is not convex')
+
             matrix_world = dfs_object.matrix_world
 
             # Save the active color name for vertex color export.
