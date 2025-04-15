@@ -118,6 +118,12 @@ class ASEWriter(object):
                 submaterial_node.push_child('MATERIAL_NAME').push_datum(material)
                 diffuse_node = submaterial_node.push_child('MAP_DIFFUSE')
                 diffuse_node.push_child('MAP_NAME').push_datum('default')
+                # For inscrutible reasons, the UT2K4 ASE importer uses the BITMAP value
+                # when doing material lookups on import. It also has a hard-coded bit of logic to
+                # strip off the extension, so we must oblige and tack on the .bmp extension.
+                # In addition, it must have a leading backslash in order to find the beginning
+                # of the path.
+                diffuse_node.push_child('BITMAP').push_datum(f'\\{material}.bmp')
                 diffuse_node.push_child('UVW_U_OFFSET').push_datum(0.0)
                 diffuse_node.push_child('UVW_V_OFFSET').push_datum(0.0)
                 diffuse_node.push_child('UVW_U_TILING').push_datum(1.0)
