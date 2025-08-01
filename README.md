@@ -9,8 +9,8 @@ Legacy versions are available on the [releases](https://github.com/DarklightGame
 
 # Features
 * Selection and [collection exporters](https://docs.blender.org/manual/en/latest/scene_layout/collections/collections.html#exporters).
-* Fully support for handling of [Collection Instances](https://docs.blender.org/manual/en/latest/scene_layout/object/properties/instancing/collection.html). 
-* Full support for exporting multiple UV layers.
+* Full support for handling of [Collection Instances](https://docs.blender.org/manual/en/latest/scene_layout/object/properties/instancing/collection.html). 
+* Full support for multiple UV layers.
 * Easily reorder materials when using the collection exporter.
 * Support for scaling and coordinate system conversion on export.
 
