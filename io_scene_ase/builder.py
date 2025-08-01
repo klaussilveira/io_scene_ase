@@ -192,6 +192,15 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
 
             del face_material_indices
 
+            # TODO: There is an edge case here where if two different meshes have identical or nearly identical
+            # vertices and also matching smoothing groups, the engine's importer will incorrectly calculate the
+            # normal of any faces that have the shared vertices.
+            # The get around this, we could detect the overlapping vertices and display a warning, though checking
+            # for unique vertices can be quite expensive (use a KD-tree!)
+            # Another thing we can do is; when we find an overlapping vertex, we find out the range of smoothing
+            # groups that were used for that mesh. Then we can simply dodge the smoothing group by offseting the
+            # smoothing groups for the current mesh. This should work the majority of the time.
+
             # Faces
             for face_index, loop_triangle in enumerate(mesh_data.loop_triangles):
                 face = ASEFace()
