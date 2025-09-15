@@ -71,7 +71,7 @@ def dfs_objects_in_collection(collection: Collection) -> Iterable[Object]:
         yield from _dfs_object_children(obj, collection)
 
 
-def dfs_collection_objects(collection: Collection, visible_only: bool = False) -> Iterable[DfsObject]:
+def dfs_collection_objects(collection: Collection) -> Iterable[DfsObject]:
     '''
     Depth-first search of objects in a collection, including recursing into instances.
     @param collection: The collection to search in.
@@ -86,15 +86,16 @@ def _dfs_collection_objects_recursive(
         matrix_world: Matrix = Matrix.Identity(4),
         visited: Optional[Set[Object]]=None
 ) -> Iterable[DfsObject]:
-    '''
+    """
     Depth-first search of objects in a collection, including recursing into instances.
     This is a recursive function.
+    
     @param collection: The collection to search in.
     @param instance_objects: The running hierarchy of instance objects.
     @param matrix_world: The world matrix of the current object.
     @param visited: A set of visited object-instance pairs.
     @return: An iterable of tuples containing the object, the instance objects, and the world matrix.
-    '''
+    """
 
     # We want to also yield the top-level instance object so that callers can inspect the selection status etc.
     if visited is None:

@@ -2,69 +2,31 @@ from typing import Iterable, List, Set, Union, cast, Optional
 
 import bpy
 from bpy_extras.io_utils import ExportHelper
-from bpy.props import StringProperty, CollectionProperty, PointerProperty, IntProperty, EnumProperty, BoolProperty, \
-    FloatProperty
-from bpy.types import Operator, Material, PropertyGroup, UIList, Object, FileHandler, Event, Context, SpaceProperties, \
-    Collection
+from bpy.props import StringProperty, CollectionProperty, IntProperty, EnumProperty, BoolProperty
+from bpy.types import Operator, Material, UIList, Object, FileHandler, Event, Context, SpaceProperties, \
+    Collection, Panel, Depsgraph
 from mathutils import Matrix, Vector
 
 from .builder import ASEBuildOptions, ASEBuildError, build_ase
 from .writer import ASEWriter
+from .properties import TransformMixin, TransformSourceMixin, MaterialModeMixin, ASE_PG_key_value, get_vertex_color_attributes_from_objects
 
 
-class ASE_PG_material(PropertyGroup):
-    material: PointerProperty(type=Material)
-
-
-class ASE_PG_string(PropertyGroup):
-    string: StringProperty()
-
-
-def get_vertex_color_attributes_from_objects(objects: Iterable[Object]) -> Set[str]:
-    '''
-    Get the unique vertex color attributes from all the selected objects.
-    :param objects: The objects to search for vertex color attributes.
-    :return: A set of unique vertex color attributes.
-    '''
-    items = set()
-    for obj in filter(lambda x: x.type == 'MESH', objects):
-        for layer in filter(lambda x: x.domain == 'CORNER', obj.data.color_attributes):
-            items.add(layer.name)
-    return items
-
-
-def vertex_color_attribute_items(self, context):
-    # Get the unique color attributes from all the selected objects.
-    return [(x, x, '') for x in sorted(get_vertex_color_attributes_from_objects(context.selected_objects))]
-
-
-class ASE_PG_export(PropertyGroup):
-    material_list: CollectionProperty(name='Materials', type=ASE_PG_material)
-    material_list_index: IntProperty(name='Index', default=0)
-    should_export_vertex_colors: BoolProperty(name='Export Vertex Colors', default=True)
-    vertex_color_mode: EnumProperty(name='Vertex Color Mode', items=(
-        ('ACTIVE', 'Active', 'Use the active vertex color attribute'),
-        ('EXPLICIT', 'Explicit', 'Use the vertex color attribute specified below'),
-    ))
-    has_vertex_colors: BoolProperty(name='Has Vertex Colors', default=False, options={'HIDDEN'})
-    vertex_color_attribute: EnumProperty(name='Attribute', items=vertex_color_attribute_items)
-    should_invert_normals: BoolProperty(name='Invert Normals', default=False, description='Invert the normals of the exported geometry. This should be used if the software you are exporting to uses a different winding order than Blender')
-
-
-def get_unique_materials(mesh_objects: Iterable[Object]) -> List[Material]:
+def get_unique_materials(depsgraph: Depsgraph, mesh_objects: Iterable[Object]) -> List[Material]:
     materials = []
     for mesh_object in mesh_objects:
-        for i, material_slot in enumerate(mesh_object.material_slots):
+        eo = mesh_object.evaluated_get(depsgraph)
+        for i, material_slot in enumerate(eo.material_slots):
             material = material_slot.material
-            if material is None:
-                raise RuntimeError(f'Material slots cannot be empty ({mesh_object.name}, material slot index {i})')
+            # if material is None:
+                # raise RuntimeError(f'Material slots cannot be empty ({mesh_object.name}, material slot index {i})')
             if material not in materials:
                 materials.append(material)
     return materials
 
 
-def populate_material_list(mesh_objects: Iterable[Object], material_list):
-    materials = get_unique_materials(mesh_objects)
+def populate_material_list(depsgraph: Depsgraph, mesh_objects: Iterable[Object], material_list):
+    materials = get_unique_materials(depsgraph, mesh_objects)
     material_list.clear()
     for index, material in enumerate(materials):
         m = material_list.add()
@@ -95,10 +57,10 @@ def get_collection_export_operator_from_context(context: Context) -> Optional['A
     return exporter.export_properties
 
 
-class ASE_OT_material_order_add(Operator):
-    bl_idname = 'ase_export.material_order_add'
+class ASE_OT_material_mapping_add(Operator):
+    bl_idname = 'ase_export.material_mapping_add'
     bl_label = 'Add'
-    bl_description = 'Add a material to the list'
+    bl_description = 'Add a material mapping to the list'
 
     def invoke(self, context: Context, event: Event) -> Union[Set[str], Set[int]]:
         # TODO: get the region that this was invoked from and set the collection to the collection of the region.
@@ -112,23 +74,23 @@ class ASE_OT_material_order_add(Operator):
         if operator is None:
             return {'INVALID_CONTEXT'}
 
-        material_string = operator.material_order.add()
-        material_string.string = 'Material'
+        material_mapping = operator.material_mapping.add()
+        material_mapping.key = 'Material'
 
         return {'FINISHED'}
 
 
-class ASE_OT_material_order_remove(Operator):
-    bl_idname = 'ase_export.material_order_remove'
+class ASE_OT_material_mapping_remove(Operator):
+    bl_idname = 'ase_export.material_mapping_remove'
     bl_label = 'Remove'
-    bl_description = 'Remove the selected material from the list'
+    bl_description = 'Remove the selected material mapping from the list'
 
     @classmethod
     def poll(cls, context: Context):
         operator = get_collection_export_operator_from_context(context)
         if operator is None:
             return False
-        return 0 <= operator.material_order_index < len(operator.material_order)
+        return 0 <= operator.material_mapping_index < len(operator.material_mapping)
 
     def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
         operator = get_collection_export_operator_from_context(context)
@@ -136,22 +98,22 @@ class ASE_OT_material_order_remove(Operator):
         if operator is None:
             return {'INVALID_CONTEXT'}
 
-        operator.material_order.remove(operator.material_order_index)
+        operator.material_mapping.remove(operator.material_mapping_index)
 
         return {'FINISHED'}
 
 
-class ASE_OT_material_order_move_up(Operator):
-    bl_idname = 'ase_export.material_order_move_up'
+class ASE_OT_material_mapping_move_up(Operator):
+    bl_idname = 'ase_export.material_mapping_move_up'
     bl_label = 'Move Up'
-    bl_description = 'Move the selected material up one slot'
+    bl_description = 'Move the selected material mapping up one slot'
 
     @classmethod
     def poll(cls, context: Context):
         operator = get_collection_export_operator_from_context(context)
         if operator is None:
             return False
-        return operator.material_order_index > 0
+        return operator.material_mapping_index > 0
 
     def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
         operator = get_collection_export_operator_from_context(context)
@@ -159,23 +121,23 @@ class ASE_OT_material_order_move_up(Operator):
         if operator is None:
             return {'INVALID_CONTEXT'}
 
-        operator.material_order.move(operator.material_order_index, operator.material_order_index - 1)
-        operator.material_order_index -= 1
+        operator.material_mapping.move(operator.material_mapping_index, operator.material_mapping_index - 1)
+        operator.material_mapping_index -= 1
 
         return {'FINISHED'}
 
 
-class ASE_OT_material_order_move_down(Operator):
-    bl_idname = 'ase_export.material_order_move_down'
+class ASE_OT_material_mapping_move_down(Operator):
+    bl_idname = 'ase_export.material_mapping_move_down'
     bl_label = 'Move Down'
-    bl_description = 'Move the selected material down one slot'
+    bl_description = 'Move the selected material mapping down one slot'
 
     @classmethod
     def poll(cls, context: Context):
         operator = get_collection_export_operator_from_context(context)
         if operator is None:
             return False
-        return operator.material_order_index < len(operator.material_order) - 1
+        return operator.material_mapping_index < len(operator.material_mapping) - 1
 
     def execute(self, context: 'Context') -> Union[Set[str], Set[int]]:
         operator = get_collection_export_operator_from_context(context)
@@ -183,8 +145,8 @@ class ASE_OT_material_order_move_down(Operator):
         if operator is None:
             return {'INVALID_CONTEXT'}
 
-        operator.material_order.move(operator.material_order_index, operator.material_order_index + 1)
-        operator.material_order_index += 1
+        operator.material_mapping.move(operator.material_mapping_index, operator.material_mapping_index + 1)
+        operator.material_mapping_index += 1
 
         return {'FINISHED'}
 
@@ -226,34 +188,31 @@ class ASE_OT_material_list_move_down(Operator):
 
 
 class ASE_UL_materials(UIList):
+    bl_idname = 'ASE_UL_materials'
+
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row()
         row.prop(item.material, 'name', text='', emboss=False, icon_value=layout.icon(item.material))
 
 
 class ASE_UL_material_names(UIList):
+    bl_idname = 'ASE_UL_material_names'
+
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row()
-        material = bpy.data.materials.get(item.string, None)
-        row.prop(item, 'string', text='', emboss=False, icon_value=layout.icon(material) if material is not None else 0)
+        material = bpy.data.materials.get(item.key, None)
+        col= row.column()
+        col.enabled = False
+        col.prop(item, 'key', text='', emboss=False, icon_value=layout.icon(material) if material is not None else 0)
+        row.label(icon='RIGHTARROW', text='')
+        material = bpy.data.materials.get(item.value, None)
+        row.prop(item, 'value', text='', emboss=False, icon_value=layout.icon(material) if material is not None else 0)
 
 
-
-object_eval_state_items = [
-    ('EVALUATED', 'Evaluated', 'Use data from fully evaluated object'),
-    ('ORIGINAL', 'Original', 'Use data from original object with no modifiers applied'),
-]
-
-
-class ASE_OT_populate_material_order_list(Operator):
-    bl_idname = 'ase_export.populate_material_order_list'
-    bl_label = 'Populate Material Order List'
-    bl_description = 'Populate the material order list with the materials used by objects in the collection'
-
-    visible_only: BoolProperty(name='Visible Only', default=True, description='Populate the list with only the materials of visible objects')
-
-    def invoke(self, context: 'Context', event: 'Event'):
-        return context.window_manager.invoke_props_dialog(self)
+class ASE_OT_material_names_populate(Operator):
+    bl_idname = 'ase_export.material_names_populate'
+    bl_label = 'Populate Material Names List'
+    bl_description = 'Populate the material names with the materials used by objects in the collection'
 
     def execute(self, context):
         collection = get_collection_from_context(context)
@@ -263,50 +222,27 @@ class ASE_OT_populate_material_order_list(Operator):
 
         from .dfs import dfs_collection_objects
 
-        mesh_objects = list(map(lambda x: x.obj, filter(lambda x: x.obj.type == 'MESH', dfs_collection_objects(collection, True))))
+        mesh_objects = list(map(lambda x: x.obj, filter(lambda x: x.obj.type == 'MESH', dfs_collection_objects(collection))))
 
         # Exclude objects that are not visible.
-        materials = get_unique_materials(mesh_objects)
+        materials = get_unique_materials(context.evaluated_depsgraph_get(), mesh_objects)
 
-        operator.material_order.clear()
+        operator.material_mapping.clear()
         for material in materials:
-            m = operator.material_order.add()
-            m.string = material.name
+            m = operator.material_mapping.add()
+            m.key = material.name
+            m.value = material.name
 
         return {'FINISHED'}
 
 
-empty_set = set()
-axis_identifiers = ('X', 'Y', 'Z', '-X', '-Y', '-Z')
-forward_items = (
-    ('X', 'X Forward', ''),
-    ('Y', 'Y Forward', ''),
-    ('Z', 'Z Forward', ''),
-    ('-X', '-X Forward', ''),
-    ('-Y', '-Y Forward', ''),
-    ('-Z', '-Z Forward', ''),
-)
-
-up_items = (
-    ('X', 'X Up', ''),
-    ('Y', 'Y Up', ''),
-    ('Z', 'Z Up', ''),
-    ('-X', '-X Up', ''),
-    ('-Y', '-Y Up', ''),
-    ('-Z', '-Z Up', ''),
-)
-
-def forward_axis_update(self, _context: Context):
-    if self.forward_axis == self.up_axis:
-        self.up_axis = next((axis for axis in axis_identifiers if axis != self.forward_axis), 'Z')
+object_eval_state_items = [
+    ('EVALUATED', 'Evaluated', 'Use data from fully evaluated object'),
+    ('ORIGINAL', 'Original', 'Use data from original object with no modifiers applied'),
+]
 
 
-def up_axis_update(self, _context: Context):
-    if self.up_axis == self.forward_axis:
-        self.forward_axis = next((axis for axis in axis_identifiers if axis != self.up_axis), 'X')
-
-
-class ASE_OT_export(Operator, ExportHelper):
+class ASE_OT_export(Operator, ExportHelper, TransformMixin, TransformSourceMixin):
     bl_idname = 'io_scene_ase.ase_export'
     bl_label = 'Export ASE'
     bl_space_type = 'PROPERTIES'
@@ -314,17 +250,11 @@ class ASE_OT_export(Operator, ExportHelper):
     bl_description = 'Export selected objects to ASE'
     filename_ext = '.ase'
     filter_glob: StringProperty(default="*.ase", options={'HIDDEN'}, maxlen=255)
-
-    # TODO: why are these not part of the ASE_PG_export property group?
     object_eval_state: EnumProperty(
         items=object_eval_state_items,
         name='Data',
         default='EVALUATED'
     )
-    should_export_visible_only: BoolProperty(name='Visible Only', default=False, description='Export only visible objects')
-    scale: FloatProperty(name='Scale', default=1.0, min=0.0001, soft_max=1000.0, description='Scale factor to apply to the exported geometry')
-    forward_axis: EnumProperty(name='Forward', items=forward_items, default='X', update=forward_axis_update)
-    up_axis: EnumProperty(name='Up', items=up_items, default='Z', update=up_axis_update)
 
     @classmethod
     def poll(cls, context):
@@ -398,7 +328,7 @@ class ASE_OT_export(Operator, ExportHelper):
         pg = getattr(context.scene, 'ase_export')
 
         try:
-            populate_material_list(mesh_objects, pg.material_list)
+            populate_material_list(context.evaluated_depsgraph_get(), mesh_objects, pg.material_list)
         except RuntimeError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
@@ -420,10 +350,16 @@ class ASE_OT_export(Operator, ExportHelper):
         options.vertex_color_attribute = pg.vertex_color_attribute
         options.materials = [x.material for x in pg.material_list]
         options.should_invert_normals = pg.should_invert_normals
-        options.should_export_visible_only = self.should_export_visible_only
-        options.scale = self.scale
-        options.forward_axis = self.forward_axis
-        options.up_axis = self.up_axis
+
+        match self.transform_source:
+            case 'SCENE':
+                transform_source = getattr(context.scene, 'ase_settings')
+            case 'OBJECT':
+                transform_source = self
+
+        options.scale = transform_source.scale
+        options.forward_axis = transform_source.forward_axis
+        options.up_axis = transform_source.up_axis
 
         from .dfs import dfs_view_layer_objects
 
@@ -447,12 +383,13 @@ class ASE_OT_export(Operator, ExportHelper):
 
 
 export_space_items = [
-    ('WORLD', 'World Space', 'Export the collection in world-space (i.e., as it appears in the 3D view)'),
-    ('INSTANCE', 'Instance Space', 'Export the collection as an instance (transforms the world-space geometry by the inverse of the instance offset)'),
+    ('WORLD', 'World Space', 'Export the collection in world space'),
+    ('INSTANCE', 'Instance Space', 'Export the collection in instance space'),
+    ('OBJECT', 'Object Space', 'Export the collection in the active object\'s local space'),
 ]
 
 
-class ASE_OT_export_collection(Operator, ExportHelper):
+class ASE_OT_export_collection(Operator, ExportHelper, TransformSourceMixin, TransformMixin, MaterialModeMixin):
     bl_idname = 'io_scene_ase.ase_export_collection'
     bl_label = 'Export collection to ASE'
     bl_space_type = 'PROPERTIES'
@@ -471,13 +408,9 @@ class ASE_OT_export_collection(Operator, ExportHelper):
     )
 
     collection: StringProperty()
-    material_order: CollectionProperty(name='Materials', type=ASE_PG_string)
-    material_order_index: IntProperty(name='Index', default=0)
+    material_mapping: CollectionProperty(name='Materials', type=ASE_PG_key_value)
+    material_mapping_index: IntProperty(name='Index', default=0)
     export_space: EnumProperty(name='Export Space', items=export_space_items, default='INSTANCE')
-    should_export_visible_only: BoolProperty(name='Visible Only', default=False, description='Export only visible objects')
-    scale: FloatProperty(name='Scale', default=1.0, min=0.0001, soft_max=1000.0, description='Scale factor to apply to the exported geometry')
-    forward_axis: EnumProperty(name='Forward', items=forward_items, default='X', update=forward_axis_update)
-    up_axis: EnumProperty(name='Up', items=up_items, default='Z', update=up_axis_update)
 
     def draw(self, context):
         layout = self.layout
@@ -485,22 +418,23 @@ class ASE_OT_export_collection(Operator, ExportHelper):
         flow = layout.grid_flow()
         flow.use_property_split = True
         flow.use_property_decorate = False
-        flow.prop(self, 'should_export_visible_only')
 
         materials_header, materials_panel = layout.panel('Materials', default_closed=True)
         materials_header.label(text='Materials')
 
         if materials_panel:
-            row = materials_panel.row()
-            row.template_list('ASE_UL_material_names', '', self, 'material_order', self, 'material_order_index')
-            col = row.column(align=True)
-            col.operator(ASE_OT_material_order_add.bl_idname, icon='ADD', text='')
-            col.operator(ASE_OT_material_order_remove.bl_idname, icon='REMOVE', text='')
-            col.separator()
-            col.operator(ASE_OT_material_order_move_up.bl_idname, icon='TRIA_UP', text='')
-            col.operator(ASE_OT_material_order_move_down.bl_idname, icon='TRIA_DOWN', text='')
-            col.separator()
-            col.operator(ASE_OT_populate_material_order_list.bl_idname, icon='FILE_REFRESH', text='')
+            materials_panel.prop(self, 'material_mode', text='Material Mode')
+            if self.material_mode == 'MANUAL':
+                row = materials_panel.row()
+                row.template_list(ASE_UL_material_names.bl_idname, '', self, 'material_mapping', self, 'material_mapping_index')
+                col = row.column(align=True)
+                col.operator(ASE_OT_material_mapping_add.bl_idname, icon='ADD', text='')
+                col.operator(ASE_OT_material_mapping_remove.bl_idname, icon='REMOVE', text='')
+                col.separator()
+                col.operator(ASE_OT_material_mapping_move_up.bl_idname, icon='TRIA_UP', text='')
+                col.operator(ASE_OT_material_mapping_move_down.bl_idname, icon='TRIA_DOWN', text='')
+                col.separator()
+                col.operator(ASE_OT_material_names_populate.bl_idname, icon='FILE_REFRESH', text='')
 
         transform_header, transform_panel = layout.panel('Transform', default_closed=True)
         transform_header.label(text='Transform')
@@ -508,9 +442,21 @@ class ASE_OT_export_collection(Operator, ExportHelper):
         if transform_panel:
             transform_panel.use_property_split = True
             transform_panel.use_property_decorate = False
-            transform_panel.prop(self, 'scale')
-            transform_panel.prop(self, 'forward_axis')
-            transform_panel.prop(self, 'up_axis')
+            transform_panel.prop(self, 'transform_source')
+
+            flow = transform_panel.grid_flow()
+            match self.transform_source:
+                case 'SCENE':
+                    transform_source = getattr(context.scene, 'ase_settings')
+                    flow.enabled = False
+                case 'OBJECT':
+                    transform_source = self
+
+            flow.use_property_split = True
+            flow.use_property_decorate = False
+            flow.prop(transform_source, 'scale')
+            flow.prop(transform_source, 'forward_axis')
+            flow.prop(transform_source, 'up_axis')
 
         advanced_header, advanced_panel = layout.panel('Advanced', default_closed=True)
         advanced_header.label(text='Advanced')
@@ -526,41 +472,55 @@ class ASE_OT_export_collection(Operator, ExportHelper):
 
         options = ASEBuildOptions()
         options.object_eval_state = self.object_eval_state
-        options.scale = self.scale
-        options.forward_axis = self.forward_axis
-        options.up_axis = self.up_axis
+
+        match self.transform_source:
+            case 'SCENE':
+                transform_source = getattr(context.scene, 'ase_settings')
+            case 'OBJECT':
+                transform_source = self
+
+        options.scale = transform_source.scale
+        options.forward_axis = transform_source.forward_axis
+        options.up_axis = transform_source.up_axis
 
         match self.export_space:
             case 'WORLD':
                 options.transform = Matrix.Identity(4)
             case 'INSTANCE':
                 options.transform = Matrix.Translation(-Vector(collection.instance_offset))
+            case 'BONE':
+                options.transform = Matrix
 
         from .dfs import dfs_collection_objects
 
-        dfs_objects = list(filter(lambda x: x.obj.type == 'MESH', dfs_collection_objects(collection, options.should_export_visible_only)))
+        dfs_objects = list(filter(lambda x: x.obj.type == 'MESH', dfs_collection_objects(collection)))
         mesh_objects = [x.obj for x in dfs_objects]
 
         # Get all the materials used by the objects in the collection.
-        options.materials = get_unique_materials(mesh_objects)
+        options.materials = get_unique_materials(context.evaluated_depsgraph_get(), mesh_objects)
 
-        # Sort the materials based on the order in the material order list, keeping in mind that the material order list
-        # may not contain all the materials used by the objects in the collection.
-        material_order = [x.string for x in self.material_order]
-        material_order_map = {x: i for i, x in enumerate(material_order)}
+        if self.material_mode == 'MANUAL':
+            # Build material mapping.
+            for material_mapping in self.material_mapping:
+                options.material_mapping[material_mapping.key] = material_mapping.value
 
-        # Split the list of materials into two lists: one for materials that appear in the material order list, and one
-        # for materials that do not. Then append the two lists together, with the ordered materials first.
-        ordered_materials = []
-        unordered_materials = []
-        for material in options.materials:
-            if material.name in material_order_map:
-                ordered_materials.append(material)
-            else:
-                unordered_materials.append(material)
+            # Sort the materials based on the order in the material order list, keeping in mind that the material order list
+            # may not contain all the materials used by the objects in the collection.
+            material_names = [x.key for x in self.material_mapping]
+            material_names_map = {x: i for i, x in enumerate(material_names)}
 
-        ordered_materials.sort(key=lambda x: material_order_map.get(x.name, len(material_order)))
-        options.materials = ordered_materials + unordered_materials
+            # Split the list of materials into two lists: one for materials that appear in the material order list, and one
+            # for materials that do not. Then append the two lists together, with the ordered materials first.
+            ordered_materials = []
+            unordered_materials = []
+            for material in options.materials:
+                if material.name in material_names_map:
+                    ordered_materials.append(material)
+                else:
+                    unordered_materials.append(material)
+
+            ordered_materials.sort(key=lambda x: material_names_map.get(x.name, len(material_names)))
+            options.materials = ordered_materials + unordered_materials
 
         try:
             ase = build_ase(context, options, dfs_objects)
@@ -577,6 +537,35 @@ class ASE_OT_export_collection(Operator, ExportHelper):
         return {'FINISHED'}
 
 
+class ASE_PT_export_scene_settings(Panel):
+    bl_label = 'ASCII Scene Export'
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = 'scene'
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context: Context):
+        return context.space_data.type == 'PROPERTIES' and hasattr(context.scene, 'ase_settings')
+    
+    def draw(self, context: Context):
+        layout = self.layout
+
+        transform_source = getattr(context.scene, 'ase_settings')
+
+        transform_header, transform_panel = layout.panel('Transform', default_closed=True)
+        transform_header.label(text='Transform')
+
+        if transform_panel:
+            flow = transform_panel.grid_flow()
+            flow.use_property_split = True
+            flow.use_property_decorate = False
+            flow.prop(transform_source, 'scale')
+            flow.prop(transform_source, 'forward_axis')
+            flow.prop(transform_source, 'up_axis')
+
+
+
 class ASE_FH_export(FileHandler):
     bl_idname = 'ASE_FH_export'
     bl_label = 'ASCII Scene Export'
@@ -584,21 +573,18 @@ class ASE_FH_export(FileHandler):
     bl_file_extensions = '.ase'
 
 
-
 classes = (
-    ASE_PG_material,
-    ASE_PG_string,
     ASE_UL_materials,
     ASE_UL_material_names,
-    ASE_PG_export,
     ASE_OT_export,
     ASE_OT_export_collection,
     ASE_OT_material_list_move_down,
     ASE_OT_material_list_move_up,
-    ASE_OT_material_order_add,
-    ASE_OT_material_order_remove,
-    ASE_OT_material_order_move_down,
-    ASE_OT_material_order_move_up,
-    ASE_OT_populate_material_order_list,
+    ASE_OT_material_mapping_add,
+    ASE_OT_material_mapping_remove,
+    ASE_OT_material_mapping_move_down,
+    ASE_OT_material_mapping_move_up,
+    ASE_OT_material_names_populate,
+    ASE_PT_export_scene_settings,
     ASE_FH_export,
 )

@@ -1,6 +1,8 @@
-from typing import Iterable, Optional, List, Tuple, cast
+from typing import Iterable, Optional, List, Dict, cast
+from collections import OrderedDict
 
-from bpy.types import Object, Context, Material, Mesh
+
+from bpy.types import Context, Material, Mesh
 
 from .ase import ASE, ASEGeometryObject, ASEFace, ASEFaceNormal, ASEVertexNormal, ASEUVLayer, is_collision_name
 import bpy
@@ -20,13 +22,13 @@ class ASEBuildOptions(object):
     def __init__(self):
         self.object_eval_state = 'EVALUATED'
         self.materials: Optional[List[Material]] = None
+        self.material_mapping: Dict[str, str] = OrderedDict()
         self.transform = Matrix.Identity(4)
         self.should_export_vertex_colors = True
         self.vertex_color_mode = 'ACTIVE'
         self.has_vertex_colors = False
         self.vertex_color_attribute = ''
         self.should_invert_normals = False
-        self.should_export_visible_only = True
         self.scale = 1.0
         self.forward_axis = 'X'
         self.up_axis = 'Z'
@@ -62,7 +64,7 @@ def get_coordinate_system_transform(forward_axis: str = 'X', up_axis: str = 'Z')
 
 def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[DfsObject]) -> ASE:
     ase = ASE()
-    ase.materials = [x.name for x in options.materials]
+    ase.materials = [x.name if x is not None else 'None' for x in options.materials]
 
     # If no materials are assigned to the object, add an empty material.
     # This is necessary for the ASE format to be compatible with the UT2K4 importer.
@@ -146,14 +148,14 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
                                 options.transform @
                                 matrix_world)
 
-            for vertex_index, vertex in enumerate(mesh_data.vertices):
+            for _, vertex in enumerate(mesh_data.vertices):
                 vertex = vertex_transform @ vertex.co
                 vertex = coordinate_system_transform @ vertex
                 geometry_object.vertices.append(vertex)
 
             material_indices = []
             if not geometry_object.is_collision:
-                for mesh_material_index, material in enumerate(obj.data.materials):
+                for mesh_material_index, material in enumerate(obj.data.materials): # TODO: this needs to use the evaluated object, doesn't it?
                     if material is None:
                         raise ASEBuildError(f'Material slot {mesh_material_index + 1} for mesh \'{obj.name}\' cannot be empty')
                     material_indices.append(ase.materials.index(material.name))
@@ -202,7 +204,7 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
             # smoothing groups for the current mesh. This should work the majority of the time.
 
             # Faces
-            for face_index, loop_triangle in enumerate(mesh_data.loop_triangles):
+            for _, loop_triangle in enumerate(mesh_data.loop_triangles):
                 face = ASEFace()
                 face.a, face.b, face.c = map(lambda j: geometry_object.vertex_offset + mesh_data.loops[loop_triangle.loops[j]].vertex_index, loop_triangle_index_order)
                 if not geometry_object.is_collision:
@@ -219,7 +221,7 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
 
             if not geometry_object.is_collision:
                 # Normals
-                for face_index, loop_triangle in enumerate(mesh_data.loop_triangles):
+                for _, loop_triangle in enumerate(mesh_data.loop_triangles):
                     face_normal = ASEFaceNormal()
                     face_normal.normal = loop_triangle.normal
                     face_normal.vertex_normals = []
@@ -279,6 +281,16 @@ def build_ase(context: Context, options: ASEBuildOptions, dfs_objects: Iterable[
             context.window_manager.progress_update(dfs_objects_processed)
 
         ase.geometry_objects.append(geometry_object)
+    
+    # Apply the material mapping.
+    material_mapping_items: list[tuple[str, str]] = list(options.material_mapping.items())
+    material_mapping_keys = list(map(lambda x: x[0], material_mapping_items))
+    for i in range(len(ase.materials)):
+        try:
+            index = material_mapping_keys.index(ase.materials[i])
+            ase.materials[i] = material_mapping_items[index][1]
+        except ValueError:
+            pass
 
     context.window_manager.progress_end()
 
